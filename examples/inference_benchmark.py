@@ -6,34 +6,29 @@ The model uses deterministic synthetic arrivals and a configurable service-time 
 It does not model CUDA kernels, real GPUs, or network overhead.
 """
 import argparse
-import heapq
 import random
 import statistics
 
 def simulate(arrivals, batch_size, max_wait_ms, base_ms, per_item_ms):
-    waiting = []
     completed = []
     worker_free = 0.0
     index = 0
     n = len(arrivals)
-    while index < n or waiting:
-        if not waiting:
-            now = max(worker_free, arrivals[index])
-            waiting.append(arrivals[index])
+    while index < n:
+        first = arrivals[index]
+        deadline = first + max_wait_ms / 1000
+        batch = [first]
+        index += 1
+        # Batch fills at the arrival of its last item, or times out.
+        while index < n and len(batch) < batch_size and arrivals[index] <= deadline:
+            batch.append(arrivals[index])
             index += 1
-        else:
-            now = max(worker_free, waiting[0])
-        deadline = waiting[0] + max_wait_ms / 1000
-        while index < n and len(waiting) < batch_size and arrivals[index] <= max(now, deadline):
-            waiting.append(arrivals[index])
-            index += 1
-        flush = max(now, min(deadline, arrivals[index] if index < n and len(waiting) >= batch_size else deadline))
+        flush = batch[-1] if len(batch) == batch_size else deadline
         start = max(worker_free, flush)
-        duration = (base_ms + per_item_ms * len(waiting)) / 1000
+        duration = (base_ms + per_item_ms * len(batch)) / 1000
         finish = start + duration
-        completed.extend((finish - arrival) * 1000 for arrival in waiting)
+        completed.extend((finish - arrival) * 1000 for arrival in batch)
         worker_free = finish
-        waiting.clear()
     return completed, worker_free
 
 def percentile(values, p):

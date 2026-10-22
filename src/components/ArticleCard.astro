@@ -1,0 +1,9 @@
+---
+const { article } = Astro.props;
+---
+<a class="article-card" href={`/articles/${article.id}/`}>
+  <div class="card-meta">{article.data.category} · {article.data.readingTime}</div>
+  <h3>{article.data.title}</h3>
+  <p>{article.data.description}</p>
+  <div class="card-bottom">{article.data.pubDate.toLocaleDateString('en-IE', {year:'numeric',month:'long',day:'numeric'})} <span style="float:right;color:var(--accent)">Read article ↗</span></div>
+</a>

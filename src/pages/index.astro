@@ -1,0 +1,11 @@
+---
+import Base from '../layouts/Base.astro';
+import ArticleCard from '../components/ArticleCard.astro';
+import { getCollection } from 'astro:content';
+const articles = (await getCollection('articles')).sort((a,b)=>b.data.pubDate.valueOf()-a.data.pubDate.valueOf());
+---
+<Base>
+  <div class="shell"><section class="hero"><div class="eyebrow">Machine learning systems · Inference · Distributed computing</div><h1>Engineering<br/><em>Production AI.</em></h1><p class="lead">Practical deep dives into the architectures, trade-offs, and engineering decisions behind scalable machine learning systems. Written by Lokesh Jain, a Dublin-based ML infrastructure engineer.</p><div class="actions"><a class="button" href="/articles">Explore articles →</a><a class="button secondary" href="/about">About me ↗</a></div></section></div>
+  <section class="section"><div class="shell"><div class="section-heading"><h2>Latest writing</h2><a href="/articles">All articles →</a></div><div class="grid">{articles.slice(0,3).map(a=><ArticleCard article={a}/>)}</div></div></section>
+  <section class="section" style="background:#0e1929"><div class="shell"><div class="eyebrow">What I write about</div><div class="pillars"><div class="pillar"><h3>01 / Inference & serving</h3><p>Model serving, GPU workloads, batching, latency, throughput, and multimodal AI systems.</p></div><div class="pillar"><h3>02 / Distributed systems</h3><p>Scheduling, orchestration, resource management, reliability, and scalable execution.</p></div><div class="pillar"><h3>03 / ML platforms & LLMOps</h3><p>Training infrastructure, active learning, experiment tracking, deployment, and production workflows.</p></div></div></div></section>
+</Base>

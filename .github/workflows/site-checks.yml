@@ -1,0 +1,26 @@
+name: Site checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Verify generated routes
+        run: |
+          test -f dist/index.html
+          test -f dist/articles/index.html
+          test -f dist/sitemap.xml
+          test -f dist/robots.txt
+          test -f dist/inference-pipeline.svg

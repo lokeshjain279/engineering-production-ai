@@ -19,25 +19,9 @@ In this article, I'll walk through the components of a scalable inference pipeli
 
 A typical production pipeline looks like this:
 
-```text
-Clients / Data Sources
-        |
-   API / Ingestion
-        |
-  Validation + Queue
-        |
- Scheduler / Router
-        |
- CPU Preprocessing
-        |
-  GPU Model Workers
-        |
- Postprocessing + Results
-        |
-  Storage / Response
+![Architecture diagram showing clients, ingestion, bounded queue, scheduling, preprocessing, GPU workers, and results, with observability spanning the pipeline](/inference-pipeline.svg)
 
-Metrics, tracing, and alerts span every stage.
-```
+The diagram is intentionally simplified: production implementations may include additional validation, caching, retries, and storage components.
 
 Each stage introduces different constraints. Input decoding may be CPU-bound, data retrieval may be network-bound, and model execution may be limited by GPU compute or memory bandwidth.
 

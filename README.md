@@ -53,3 +53,11 @@ Then write Markdown below the frontmatter. Articles automatically appear in the 
 ## Privacy
 
 No analytics or tracking scripts are included. The site loads fonts from Google Fonts; self-host fonts if you prefer to avoid third-party font requests. Avoid publishing confidential employer architecture, internal metrics, or proprietary code.
+
+## Automated checks and sitemap
+
+Pull requests and pushes to `main` run the GitHub Actions **Site checks** workflow: `npm ci`, `npm run build`, and assertions for generated pages and sitemap. The site publishes `/sitemap.xml` from the Astro article collection and advertises it in `robots.txt`.
+
+## Inference batching experiment
+
+Run `python3 examples/inference_benchmark.py --requests 2000 --rate 200 --seed 42` with Python 3.10+ to compare synthetic batch policies. This is a deterministic **queueing simulation**, not measured GPU performance. For real performance claims, benchmark a deployed model and publish its hardware, configuration, workload, and latency distributions.

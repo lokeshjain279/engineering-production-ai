@@ -3,17 +3,15 @@ title: "Designing Scalable ML Inference Pipelines"
 description: "From model execution to production systems: batching, scheduling, GPU efficiency, reliability, and observability."
 pubDate: 2026-10-22
 category: "ML Inference"
-readingTime: "9 min read"
+readingTime: "14 min read"
 featured: true
 ---
 
-Building a machine learning model is one challenge. Serving it reliably and efficiently at scale is a different engineering problem altogether.
+Most inference discussions start with the model: its architecture, quantization strategy, or tokens per second. I think that's only part of the story. Once a model becomes a service, the engineering problem shifts from *how fast can one forward pass run?* to *how predictably can the whole system handle real traffic?*
 
-Inference starts with something deceptively simple: load a trained model, pass an input through it, and return a prediction. That works during experimentation. In production, however, requests arrive at unpredictable rates, inputs vary in size, GPU resources are expensive, and downstream services expect predictable latency and availability.
+That's the perspective I bring from working on ML platforms, distributed execution systems, and multimodal inference. Video, audio, image, and text workloads don't arrive neatly shaped or evenly spaced. They compete for CPU, memory, GPU time, and downstream capacity. A good benchmark on an isolated model doesn't tell us how the service behaves when queues grow or a worker disappears.
 
-These challenges become even more interesting in multimodal systems, where a single pipeline may process text, images, audio, and video using different models and hardware resources.
-
-In this article, I'll walk through the components of a scalable inference pipeline and the architectural trade-offs that matter as workloads grow.
+This article is my framework for thinking about that system: where I draw boundaries, which trade-offs I make explicit, and what I would measure before reaching for an optimization. The diagrams are conceptual examples, not drawings of any employer's internal infrastructure.
 
 ## 1. Inference is a system, not just a model
 
@@ -21,7 +19,7 @@ A typical production pipeline looks like this:
 
 ![Architecture diagram showing clients, ingestion, bounded queue, scheduling, preprocessing, GPU workers, and results, with observability spanning the pipeline](/inference-pipeline.svg)
 
-The diagram is intentionally simplified: production implementations may include additional validation, caching, retries, and storage components.
+I like to draw this boundary early: ingestion and admission control protect the system; scheduling and workers perform the expensive work; results and telemetry tell us whether the whole path met its contract. The diagram is intentionally simplified, not a depiction of a particular production deployment.
 
 Each stage introduces different constraints. Input decoding may be CPU-bound, data retrieval may be network-bound, and model execution may be limited by GPU compute or memory bandwidth.
 
@@ -35,13 +33,19 @@ Optimizing the model alone doesn't necessarily improve the end-to-end experience
 
 The trade-off is operational complexity. An asynchronous system needs durable job state, idempotency, retry policies, result storage, and a clear definition of what happens when a worker fails halfway through a job.
 
-A useful rule: design around the client's latency requirements and the workload's execution-time distribution, not around a preferred technology.
+My rule is to start with the client's contract, not a preferred framework. An interactive API needs a clear latency budget. A video-processing job may care more about completion time, durability, and recoverability. The same model can require very different infrastructure depending on that contract.
+
+A synchronous endpoint can still use internal queues and batching. An asynchronous pipeline isn't automatically reliable just because a message broker is present; it needs explicit ownership of retries, duplicate processing, and result state.
 
 ## 3. Batching: throughput versus latency
 
 GPUs are optimized for parallel computation. Executing every small request independently can leave substantial capacity unused. Batching groups requests into fewer model invocations and may improve throughput.
 
-But a request waiting for a batch to fill is not making progress. Larger batches may improve aggregate efficiency while hurting p95 or p99 latency.
+But the queue is part of latency. A request waiting for a batch to fill is not making progress. Larger batches can improve aggregate efficiency while hurting p95 or p99 latency. That trade-off should be visible, not hidden inside a serving framework.
+
+![Two dynamic batching flush conditions: maximum batch size and maximum wait deadline](/diagrams/batching-tradeoff.svg)
+
+I think of the batcher's job as enforcing two independent limits: stop waiting when the batch is full, and stop waiting when the oldest request reaches its deadline. Neither limit is a universal constant. Both depend on the traffic pattern and model.
 
 A dynamic batcher typically needs two limits:
 
@@ -59,6 +63,12 @@ A scheduler decides where requests should execute. Simple round-robin routing is
 For example, two GPU workers may have the same hardware but very different effective capacity if one is handling long-running requests.
 
 Useful scheduling signals include queue depth, active requests, estimated work, model availability, accelerator memory, and worker health.
+
+![Conceptual workload-aware router distributing requests across GPU worker pools with health feedback](/diagrams/inference-routing.svg)
+
+This is where my distributed-systems background influences how I think about inference. I prefer to separate *placement* from *execution*: the router makes a decision using imperfect, slightly stale signals; the worker executes and reports what actually happened. That separation makes it easier to reason about retries, health, and overload.
+
+A practical policy might avoid a worker whose model isn't loaded, reject a worker that is failing readiness checks, and prefer the least-backed-up compatible worker. It still needs guardrails: continuously chasing the lowest queue depth can cause thrashing, and a single long-running request can make simple queue-length comparisons misleading.
 
 Kubernetes can manage deployment, restart unhealthy pods, and scale worker replicas. But the application still needs workload-aware routing, admission control, and sensible overload behavior.
 
@@ -84,7 +94,11 @@ At minimum, instrument the stages that contribute to end-to-end latency:
 | GPU memory / utilization | Whether resources are constrained or underused |
 | Errors, retries, timeouts | Whether the service is stable under load |
 
-Traces should connect ingestion, queueing, preprocessing, inference, and result handling under a single request or job identifier.
+![Conceptual end-to-end inference trace showing admission, queueing, preprocessing, model execution, and postprocessing](/diagrams/inference-observability.svg)
+
+The first dashboard I'd build is an end-to-end latency breakdown, not a GPU utilization chart. I want to know how much time requests spend *waiting*, *preparing*, *executing*, and *returning*. Traces should connect these stages under a single request or job identifier.
+
+That distinction matters in practice: a faster model won't fix an overloaded input decoder, and more GPU replicas won't help if the scheduler is the bottleneck.
 
 ## 7. Reliability is part of performance
 
@@ -107,9 +121,21 @@ Before tuning an inference stack, I would establish a reproducible baseline:
 
 The results should determine the next optimization. If preprocessing dominates, tuning CUDA kernels is unlikely to be the best first move.
 
+### A reproducible policy experiment
+
+I've included a small [Python batching-policy simulation](https://github.com/lokeshjain279/engineering-production-ai/blob/main/examples/inference_benchmark.py) in the repository. It uses seeded synthetic request arrivals and a configurable service-time curve to compare batch-size and wait-time policies:
+
+```bash
+python3 examples/inference_benchmark.py --requests 2000 --rate 200 --seed 42
+```
+
+It reports simulated p50, p95, and throughput. **These are not GPU benchmark results**: there is no real model, CUDA execution, network, or Kubernetes scheduler in the experiment. Its value is narrower and more honest—it makes the queueing assumptions visible and gives us a reproducible starting point.
+
+For a real serving benchmark, I'd run the same workload against a deployed model, report hardware and model versions, include warm-up, record the full latency distribution, and publish the raw harness and configuration alongside any charts.
+
 ## 9. A minimal dynamic batching example
 
-The following simplified Python example illustrates the two batching constraints. It is intended as an educational sketch, not a production-ready server:
+The following simplified Python example illustrates the two batching constraints. It's intentionally a sketch rather than a production-ready server. The separate simulation above is easier to run and compare without installing GPU dependencies:
 
 ```python
 import asyncio
@@ -160,8 +186,8 @@ A real service also needs bounded admission, cancellation handling, shape-aware 
 
 ## Closing thoughts
 
-Scalable inference is fundamentally a systems engineering problem. Model speed matters, but so do scheduling, data movement, infrastructure efficiency, observability, and fault tolerance.
+The lesson I keep coming back to is that inference performance is a property of the **whole system**. Model speed matters, but so do scheduling, data movement, resource efficiency, observability, and failure behavior.
 
-The best architecture is not necessarily the most sophisticated one. It's the one that meets the workload's requirements while remaining measurable, understandable, and operationally reliable.
+I don't think the goal should be the most sophisticated serving stack. I'd rather have a system whose latency budget is explicit, whose overload behavior is predictable, and whose bottlenecks we can explain with evidence. Once those foundations are in place, model-level optimization becomes much more meaningful.
 
-*Next in this series: a hands-on dynamic batching service, with benchmark results and an examination of the throughput–latency trade-off.*
+*Next in this series: taking this batching policy into a real serving harness, then measuring the throughput–latency trade-off with a documented model and hardware setup.*

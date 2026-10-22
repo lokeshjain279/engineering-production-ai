@@ -3,6 +3,17 @@ import Base from '../../layouts/Base.astro';
 import { getCollection, render } from 'astro:content';
 export async function getStaticPaths(){const articles=await getCollection('articles');return articles.map(article=>({params:{slug:article.id},props:{article}}));}
 const {article}=Astro.props;
-const {Content}=await render(article);
+const {Content,headings}=await render(article);
+const toc=headings.filter(h=>h.depth===2);
 ---
-<Base title={`${article.data.title} | Lokesh Jain`} description={article.data.description}><div class="shell"><header class="page-head" style="max-width:850px;margin:auto"><div class="eyebrow">{article.data.category} · {article.data.readingTime}</div><h1>{article.data.title}</h1><p>{article.data.description}</p><div style="color:var(--muted);font-size:13px;margin-top:20px">{article.data.pubDate.toLocaleDateString('en-IE',{year:'numeric',month:'long',day:'numeric'})} · Lokesh Jain</div></header><article class="prose"><Content/><p style="margin-top:60px;border-top:1px solid var(--line);padding-top:20px"><a href="/articles">← Back to all articles</a></p></article></div></Base>
+<Base title={`${article.data.title} | Lokesh Jain`} description={article.data.description} type="article">
+<div class="progress" id="reading-progress" aria-hidden="true"></div>
+<div class="shell"><header class="page-head" style="max-width:850px;margin:auto"><div class="eyebrow">{article.data.category} · {article.data.readingTime}</div><h1>{article.data.title}</h1><p>{article.data.description}</p><div style="color:var(--muted);font-size:13px;margin-top:20px"><time datetime={article.data.pubDate.toISOString()}>{article.data.pubDate.toLocaleDateString('en-IE',{year:'numeric',month:'long',day:'numeric'})}</time> · Lokesh Jain</div></header>
+<div class="article-layout"><article class="prose" id="article-content"><Content/><p style="margin-top:60px;border-top:1px solid var(--line);padding-top:20px"><a href="/articles">← Back to all articles</a></p></article>{toc.length>0&&<aside class="toc" aria-label="On this page"><h2>On this page</h2><nav>{toc.map(h=><a href={`#${h.slug}`}>{h.text}</a>)}</nav></aside>}</div></div>
+<script>
+const article=document.querySelector<HTMLElement>('#article-content');
+const progress=document.querySelector<HTMLElement>('#reading-progress');
+function updateProgress(){if(!article||!progress)return;const start=article.getBoundingClientRect().top+window.scrollY;const height=article.offsetHeight-window.innerHeight;const percent=height>0?Math.max(0,Math.min(100,(window.scrollY-start)/height*100)):100;progress.style.width=percent+'%'}
+window.addEventListener('scroll',updateProgress,{passive:true});window.addEventListener('resize',updateProgress);updateProgress();
+</script>
+</Base>

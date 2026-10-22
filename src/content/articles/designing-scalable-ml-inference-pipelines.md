@@ -19,25 +19,9 @@ In this article, I'll walk through the components of a scalable inference pipeli
 
 A typical production pipeline looks like this:
 
-```text
-Clients / Data Sources
-        |
-   API / Ingestion
-        |
-  Validation + Queue
-        |
- Scheduler / Router
-        |
- CPU Preprocessing
-        |
-  GPU Model Workers
-        |
- Postprocessing + Results
-        |
-  Storage / Response
+![Architecture diagram showing clients, ingestion, bounded queue, scheduling, preprocessing, GPU workers, and results, with observability spanning the pipeline](/inference-pipeline.svg)
 
-Metrics, tracing, and alerts span every stage.
-```
+The diagram is intentionally simplified: production implementations may include additional validation, caching, retries, and storage components.
 
 Each stage introduces different constraints. Input decoding may be CPU-bound, data retrieval may be network-bound, and model execution may be limited by GPU compute or memory bandwidth.
 
@@ -122,6 +106,57 @@ Before tuning an inference stack, I would establish a reproducible baseline:
 6. Compare results against explicit latency and cost objectives.
 
 The results should determine the next optimization. If preprocessing dominates, tuning CUDA kernels is unlikely to be the best first move.
+
+## 9. A minimal dynamic batching example
+
+The following simplified Python example illustrates the two batching constraints. It is intended as an educational sketch, not a production-ready server:
+
+```python
+import asyncio
+import time
+
+class DynamicBatcher:
+    def __init__(self, infer, max_batch_size=16, max_wait_ms=10):
+        self.infer = infer
+        self.max_batch_size = max_batch_size
+        self.max_wait_s = max_wait_ms / 1000
+        self.queue = asyncio.Queue()
+
+    async def submit(self, payload):
+        future = asyncio.get_running_loop().create_future()
+        await self.queue.put((payload, future))
+        return await future
+
+    async def run(self):
+        while True:
+            first = await self.queue.get()
+            batch = [first]
+            deadline = time.monotonic() + self.max_wait_s
+            while len(batch) < self.max_batch_size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    batch.append(await asyncio.wait_for(
+                        self.queue.get(), timeout=remaining
+                    ))
+                except asyncio.TimeoutError:
+                    break
+            inputs = [item for item, _ in batch]
+            try:
+                outputs = await self.infer(inputs)
+                if len(outputs) != len(batch):
+                    raise ValueError("Inference output count mismatch")
+                for (_, future), output in zip(batch, outputs):
+                    if not future.done():
+                        future.set_result(output)
+            except Exception as error:
+                for _, future in batch:
+                    if not future.done():
+                        future.set_exception(error)
+```
+
+A real service also needs bounded admission, cancellation handling, shape-aware grouping, worker lifecycle management, instrumentation, and a deliberate overload policy. The `infer` callback must be asynchronous or offload blocking GPU work so it does not stall the event loop.
 
 ## Closing thoughts
 

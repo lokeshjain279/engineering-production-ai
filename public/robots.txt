@@ -1,3 +1,2 @@
 User-agent: *
 Allow: /
-Sitemap: https://engineering-production-ai.pages.dev/sitemap-index.xml
